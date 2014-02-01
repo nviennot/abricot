@@ -25,7 +25,7 @@ class Abricot::Master
     script ||= args.join(" ") if options['cmd']
 
     if script
-      lines = script.lines
+      lines = script.lines.to_a
       unless lines.first =~ /^#!/
         lines = ['#!/bin/bash'] + lines
         script = lines.join("\n")
@@ -42,8 +42,11 @@ class Abricot::Master
     num_worker_start = 0
     num_worker_done = 0
 
-    start_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C',  :title => 'start', :total => num_workers)
+    format = '%t |%b>%i| %c/%C'
+    start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers)
     done_pb = nil
+
+    status = nil
 
     redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
@@ -55,21 +58,37 @@ class Abricot::Master
         case msg['type']
         when 'start' then
           num_worker_start += 1
-          start_pb.progress = num_worker_start
+          start_pb.progress = num_worker_start if start_pb
           if num_worker_start == num_workers
             start_pb.finish
-            done_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C', :title => 'done ', :total => num_workers)
+            start_pb = nil
+            done_pb = ProgressBar.create(:format => format, :title => 'done ', :total => num_workers)
           end
         when 'done' then
+          if msg['status'] != 0
+            start_pb = done_pb = nil
+            STDERR.puts
+            STDERR.puts "-" * 80
+            STDERR.puts "JOB FAILURE"
+            STDERR.puts "-" * 80
+            STDERR.puts msg['output']
+            STDERR.puts "-" * 80
+            redis_sub.unsubscribe("abricot:job:#{id}:progress")
+            status = :fail
+          end
+
           num_worker_done += 1
           done_pb.progress = num_worker_done if done_pb
           if num_worker_done == num_workers
             done_pb.finish if done_pb
             redis_sub.unsubscribe("abricot:job:#{id}:progress")
+            status = :success
           end
         end
       end
     end
+
+    status
   end
 
   def send_kill(id)

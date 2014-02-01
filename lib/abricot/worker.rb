@@ -48,7 +48,7 @@ class Abricot::Worker
 
     redis.publish("abricot:job:#{id}:progress", {'type' => 'start'}.to_json)
 
-    output = case options['type']
+    output, status = case options['type']
     when 'exec' then exec_and_capture(id, *options['args'])
     when 'script' then
       file = Tempfile.new('abricot-')
@@ -63,11 +63,18 @@ class Abricot::Worker
     else raise "Unknown type"
     end
 
+    return unless status
+
     STDERR.puts output
+    STDERR.puts "exited with #{status}"
     STDERR.puts "-" * 80
     STDERR.puts ""
 
-    redis.publish("abricot:job:#{id}:progress", {'type' => 'done'}.to_json)
+    # A bit racy, but whatever
+    payload = {'type' => 'done'}
+    payload['status'] = status
+    payload['output'] = output if status != 0
+    redis.publish("abricot:job:#{id}:progress", payload.to_json)
 
     kill_job(id)
   rescue Exception => e
@@ -89,12 +96,14 @@ class Abricot::Worker
         exit! 1
       end
 
+      status = nil
+
       output = []
       loop do
         unless @runner_threads[job_id]
-          STDERR.puts "WARNING: Killing running job!"
+          STDERR.puts "WARNING: Killing Running Job!"
           Process.kill('KILL', io.pid)
-          return nil
+          break
         end
 
         if IO.select([io], [], [], 0.1)
@@ -103,7 +112,9 @@ class Abricot::Worker
           output << buffer
         end
       end
-      output.join
+
+      _, status = Process.waitpid2(io.pid)
+      [output.join, status.exitstatus]
     end
   end
 end
