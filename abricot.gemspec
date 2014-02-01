@@ -3,13 +3,13 @@ $:.unshift File.expand_path("../lib", __FILE__)
 
 Gem::Specification.new do |s|
   s.name        = 'abricot'
-  s.version     = '0.1'
+  s.version     = '0.2'
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Nicolas Viennot"]
   s.email       = ["nicolas@viennot.biz"]
   s.homepage    = "https://github.com/nviennot/abricot"
-  s.summary     = "Fast Cloud Management Tool with Redis pub/sub"
-  s.description = "Fast Cloud Management Tool with Redis pub/sub"
+  s.summary     = "Fast cloud command dispatcher tool with Redis pub/sub"
+  s.description = "Fast cloud command dispatcher tool with Redis pub/sub"
   s.license     = "LGPLv3"
 
   s.add_dependency "redis", "~> 3.0.7"

@@ -1,7 +1,7 @@
 require 'thor'
 
 class Abricot::CLI < Thor
-  desc "worker", "Start listening for orders"
+  desc "listen", "Start listening for orders"
   option :redis
   def listen
     require 'abricot/worker'
