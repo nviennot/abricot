@@ -9,17 +9,20 @@ class Abricot::Master
   end
 
   def num_workers_available
-    redis.pubsub('numsub', 'abricot:job').last.to_i
+    redis.pubsub('numsub', 'abricot:slave_control').last.to_i
   end
 
   def exec(args, options={})
-    trap(:INT) { send_kill }
+    options = options.dup
+    options['id'] ||= (0...10).map { (65 + rand(26)).chr }.join
+
+    trap(:INT) { puts; send_kill(options['id']) }
     _exec(args, options)
   end
 
   def _exec(args, options={})
-    script = File.read(options[:file]) if options[:file]
-    script ||= args.join(" ") if options[:cmd]
+    script = File.read(options['file']) if options['file']
+    script ||= args.join(" ") if options['cmd']
 
     if script
       lines = script.lines
@@ -32,16 +35,19 @@ class Abricot::Master
       payload = {:type => 'exec', :args => args}
     end
 
+    id = options['id']
+    payload[:id] = id
+
     num_workers = num_workers_available
     num_worker_start = 0
     num_worker_done = 0
 
-    start_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C %e',  :title => 'start', :total => num_workers)
+    start_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C',  :title => 'start', :total => num_workers)
     done_pb = nil
 
-    redis_sub.subscribe('abricot:job:progress') do |on|
+    redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
-        redis.publish('abricot:job', payload.to_json)
+        redis.publish('abricot:slave_control', payload.to_json)
       end
 
       on.message do |channel, message|
@@ -52,21 +58,27 @@ class Abricot::Master
           start_pb.progress = num_worker_start
           if num_worker_start == num_workers
             start_pb.finish
-            done_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C %e', :title => 'done', :total => num_workers)
+            done_pb = ProgressBar.create(:format => '%t |%b>%i| %c/%C', :title => 'done ', :total => num_workers)
           end
         when 'done' then
           num_worker_done += 1
           done_pb.progress = num_worker_done if done_pb
           if num_worker_done == num_workers
             done_pb.finish if done_pb
+            redis_sub.unsubscribe("abricot:job:#{id}:progress")
           end
         end
       end
     end
   end
 
-  def send_kill
-    Thread.new { redis.publish('abricot:job', {'type' => 'kill'}.to_json) }.join
+  def send_kill(id)
+    Thread.new { redis.publish('abricot:slave_control', {'type' => 'kill', 'id' => id.to_s}.to_json) }.join
+    exit
+  end
+
+  def send_kill_all
+    Thread.new { redis.publish('abricot:slave_control', {'type' => 'killall'}.to_json) }.join
     exit
   end
 end
