@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+
+begin
+  require 'abricot'
+  require 'abricot/cli'
+  Abricot::CLI.start(ARGV)
+rescue => e
+  $stderr.puts "#{e.class}: #{e.message}"
+  $stderr.puts '-' * 80
+  $stderr.puts e.backtrace.join("\n")
+  exit 1
+end
