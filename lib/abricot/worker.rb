@@ -22,8 +22,10 @@ class Abricot::Worker
         when 'killall' then kill_all_jobs
         when 'kill'    then kill_job(id)
         else
-          kill_job(id)
-          @runner_threads[id] = Thread.new { run(msg) }
+          if redis.incr("abricot:job:#{id}:num_workers") <= msg['num_workers']
+            kill_job(id)
+            @runner_threads[id] = Thread.new { run(msg) }
+          end
         end
       end
     end
@@ -70,7 +72,6 @@ class Abricot::Worker
     STDERR.puts "-" * 80
     STDERR.puts ""
 
-    # A bit racy, but whatever
     payload = {'type' => 'done'}
     payload['status'] = status
     payload['output'] = output if status != 0

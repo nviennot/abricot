@@ -1,6 +1,9 @@
 require 'ruby-progressbar'
 
 class Abricot::Master
+  class JobFailure < RuntimeError; end
+  class NotEnoughSlaves < RuntimeError; end
+
   attr_accessor :redis, :redis_sub
 
   def initialize(options={})
@@ -35,10 +38,19 @@ class Abricot::Master
       payload = {:type => 'exec', :args => args}
     end
 
+    num_workers = options['num_workers']
+    if num_workers
+      if num_workers_available < num_workers
+        raise NotEnoughSlaves.new("found #{num_workers_available} slaves, but wanted #{num_workers}")
+      end
+    else
+      num_workers = num_workers_available
+    end
+
     id = options['id']
     payload[:id] = id
+    payload[:num_workers] = num_workers
 
-    num_workers = num_workers_available
     num_worker_start = 0
     num_worker_done = 0
 
@@ -50,6 +62,9 @@ class Abricot::Master
 
     redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
+        redis.set("abricot:job:#{id}:num_workers", 0)
+        redis.expire("abricot:job:#{id}:num_workers", 600)
+
         redis.publish('abricot:slave_control', payload.to_json)
       end
 
@@ -65,30 +80,29 @@ class Abricot::Master
             done_pb = ProgressBar.create(:format => format, :title => 'done ', :total => num_workers)
           end
         when 'done' then
-          if msg['status'] != 0
-            start_pb = done_pb = nil
-            STDERR.puts
-            STDERR.puts "-" * 80
-            STDERR.puts "JOB FAILURE"
-            STDERR.puts "-" * 80
-            STDERR.puts msg['output']
-            STDERR.puts "-" * 80
-            redis_sub.unsubscribe("abricot:job:#{id}:progress")
-            status = :fail
-          end
-
-          num_worker_done += 1
-          done_pb.progress = num_worker_done if done_pb
-          if num_worker_done == num_workers
-            done_pb.finish if done_pb
-            redis_sub.unsubscribe("abricot:job:#{id}:progress")
-            status = :success
+          if status != :fail
+            if msg['status'] != 0
+              start_pb = done_pb = nil
+              STDERR.puts
+              STDERR.puts "-" * 80
+              STDERR.puts "JOB FAILURE:"
+              STDERR.puts msg['output']
+              STDERR.puts "-" * 80
+              redis_sub.unsubscribe("abricot:job:#{id}:progress")
+              status = :fail
+            else
+              num_worker_done += 1
+              done_pb.progress = num_worker_done if done_pb
+              if num_worker_done == num_workers
+                done_pb.finish if done_pb
+                redis_sub.unsubscribe("abricot:job:#{id}:progress")
+                status = :success
+              end
+            end
           end
         end
       end
     end
-
-    status
   end
 
   def send_kill(id)
