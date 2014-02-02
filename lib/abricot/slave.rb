@@ -1,32 +1,41 @@
 require 'tempfile'
 
-class Abricot::Worker
+class Abricot::Slave
   attr_accessor :redis, :redis_sub
   attr_accessor :runner_threads
-
+  attr_accessor :tags
 
   def initialize(options={})
     @redis = Redis.new(:url => options[:redis])
     @redis_sub = Redis.new(:url => options[:redis])
     @runner_threads = {}
+    @tags = options[:tags].to_s.split(',')
   end
 
   def listen
     trap(:INT) { puts; exit }
 
-    redis_sub.subscribe('abricot:slave_control') do |on|
+    channels = (@tags + ['_all_']).map { |t| "abricot:slave_control:#{t}" }
+    redis_sub.subscribe(channels) do |on|
       on.message do |channel, message|
-        msg = JSON.parse(message)
-        id = msg['id']
-        case msg['type']
-        when 'killall' then kill_all_jobs
-        when 'kill'    then kill_job(id)
-        else
-          if redis.incr("abricot:job:#{id}:num_workers") <= msg['num_workers']
-            kill_job(id)
-            @runner_threads[id] = Thread.new { run(msg) }
-          end
-        end
+        process_message(JSON.parse(message))
+      end
+    end
+  end
+
+  def process_message(msg)
+    id = msg['id']
+    if msg['tags']
+      return if (@tags & msg['tags']).empty?
+    end
+
+    case msg['type']
+    when 'killall' then kill_all_jobs
+    when 'kill'    then kill_job(id)
+    else
+      if redis.incr("abricot:job:#{id}:num_workers") <= msg['num_workers']
+        kill_job(id)
+        @runner_threads[id] = Thread.new { run(msg) }
       end
     end
   end

@@ -11,8 +11,8 @@ class Abricot::Master
     @redis_sub = Redis.new(:url => options[:redis])
   end
 
-  def num_workers_available
-    redis.pubsub('numsub', 'abricot:slave_control').last.to_i
+  def num_workers_available(tag)
+    redis.pubsub('numsub', "abricot:slave_control:#{tag}").last.to_i
   end
 
   def exec(args, options={})
@@ -24,6 +24,9 @@ class Abricot::Master
   end
 
   def _exec(args, options={})
+    tag = options['tag'] || '_all_'
+    raise "Cannot have multi tags" if tag.include?(',')
+
     script = File.read(options['file']) if options['file']
     script ||= args.join(" ") if options['cmd']
 
@@ -39,12 +42,13 @@ class Abricot::Master
     end
 
     num_workers = options['num_workers']
+    available_workers = num_workers_available(tag)
     if num_workers
-      if num_workers_available < num_workers
-        raise NotEnoughSlaves.new("found #{num_workers_available} slaves, but wanted #{num_workers}")
+      if available_workers < num_workers
+        raise NotEnoughSlaves.new("Requested #{num_workers} slaves but only #{available_workers} were available")
       end
     else
-      num_workers = num_workers_available
+      num_workers = available_workers
     end
 
     id = options['id']
@@ -55,17 +59,18 @@ class Abricot::Master
     num_worker_done = 0
 
     format = '%t |%b>%i| %c/%C'
-    start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers)
+    start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers,
+                                  :throttle_rate => 0)
     done_pb = nil
-
     status = nil
+    output = nil
 
     redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
         redis.set("abricot:job:#{id}:num_workers", 0)
         redis.expire("abricot:job:#{id}:num_workers", 600)
 
-        redis.publish('abricot:slave_control', payload.to_json)
+        redis.publish("abricot:slave_control:#{tag}", payload.to_json)
       end
 
       on.message do |channel, message|
@@ -73,22 +78,20 @@ class Abricot::Master
         case msg['type']
         when 'start' then
           num_worker_start += 1
-          start_pb.progress = num_worker_start if start_pb
+          start_pb.progress = num_worker_start
           if num_worker_start == num_workers
             start_pb.finish
             start_pb = nil
-            done_pb = ProgressBar.create(:format => format, :title => 'done ', :total => num_workers)
+            done_pb = ProgressBar.create(:format => format, :title => 'done ', :throttle_rate => 0,
+                                         :starting_at => num_worker_done, :total => num_workers)
           end
         when 'done' then
           if status != :fail
             if msg['status'] != 0
-              start_pb = done_pb = nil
               STDERR.puts
-              STDERR.puts "-" * 80
-              STDERR.puts "JOB FAILURE:"
-              STDERR.puts msg['output']
-              STDERR.puts "-" * 80
+              start_pb = done_pb = nil
               redis_sub.unsubscribe("abricot:job:#{id}:progress")
+              output = msg['output']
               status = :fail
             else
               num_worker_done += 1
@@ -103,15 +106,17 @@ class Abricot::Master
         end
       end
     end
+
+    raise JobFailure.new(output) if status == :fail
   end
 
   def send_kill(id)
-    Thread.new { redis.publish('abricot:slave_control', {'type' => 'kill', 'id' => id.to_s}.to_json) }.join
+    Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => id.to_s}.to_json) }.join
     exit
   end
 
   def send_kill_all
-    Thread.new { redis.publish('abricot:slave_control', {'type' => 'killall'}.to_json) }.join
+    Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'killall'}.to_json) }.join
     exit
   end
 end
