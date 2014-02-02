@@ -45,9 +45,11 @@ class Abricot::Slave
     when 'killall' then kill_all_jobs
     when 'kill'    then kill_job(id)
     else
-      if redis.incr("abricot:job:#{id}:num_workers") <= msg['num_workers']
+      worker_index = redis.incr("abricot:job:#{id}:num_workers") - 1
+      num_workers = msg['num_workers']
+      if worker_index < msg['num_workers']
         kill_job(id)
-        @runner_threads[id] = Thread.new { run(msg) }
+        @runner_threads[id] = Thread.new { run(worker_index, num_workers, msg) }
       end
     end
   end
@@ -62,7 +64,7 @@ class Abricot::Slave
     end
   end
 
-  def run(options)
+  def run(worker_index, num_workers, options)
     id = options['id'].to_s
 
     STDERR.puts "-" * 80
@@ -72,14 +74,14 @@ class Abricot::Slave
     redis.publish("abricot:job:#{id}:progress", {'type' => 'start'}.to_json)
 
     output, status = case options['type']
-    when 'exec' then exec_and_capture(id, *options['args'])
+    when 'exec' then exec_and_capture(id, worker_index, num_workers, *options['args'])
     when 'script' then
       file = Tempfile.new('abricot-')
       begin
         file.write(options['script'])
         file.chmod(0755)
         file.close
-        exec_and_capture(id, file.path)
+        exec_and_capture(id, worker_index, num_workers, file.path)
       ensure
         file.delete
       end
@@ -103,12 +105,16 @@ class Abricot::Slave
     STDERR.puts e
   end
 
-  def exec_and_capture(job_id, *args)
+  def exec_and_capture(job_id, worker_index, num_workers, *args)
     args = args.map(&:to_s)
     IO.popen('-') do |io|
       unless io
         trap("SIGINT", "IGNORE")
         trap("SIGTERM", "IGNORE")
+
+        ENV['WORKER_INDEX'] = worker_index.to_s
+        ENV['NUM_WORKERS'] = num_workers.to_s
+
         $stderr.reopen($stdout)
         begin
           exec(*args)
