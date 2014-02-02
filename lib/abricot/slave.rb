@@ -16,10 +16,22 @@ class Abricot::Slave
     trap(:INT) { puts; exit }
 
     channels = (@tags + ['_all_']).map { |t| "abricot:slave_control:#{t}" }
-    redis_sub.subscribe(channels) do |on|
-      on.message do |channel, message|
-        process_message(JSON.parse(message))
+    begin
+      connected = false
+      redis_sub.subscribe(channels) do |on|
+        on.subscribe do |channel, subscriptions|
+          STDERR.puts "Connected. Listening for orders" unless connected
+          connected = true
+        end
+
+        on.message do |channel, message|
+          process_message(JSON.parse(message))
+        end
       end
+    rescue Redis::BaseConnectionError => e
+      STDERR.puts "#{e}, retrying in 1s"
+      sleep 1
+      retry
     end
   end
 
