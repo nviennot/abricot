@@ -4,11 +4,10 @@ class Abricot::Master
   class JobFailure < RuntimeError; end
   class NotEnoughSlaves < RuntimeError; end
 
-  attr_accessor :redis, :redis_sub
+  attr_accessor :redis
 
   def initialize(options={})
     @redis = Redis.new(:url => options[:redis])
-    @redis_sub = Redis.new(:url => options[:redis])
   end
 
   def num_workers_available(tag)
@@ -19,7 +18,7 @@ class Abricot::Master
     options = options.dup
     options['id'] ||= (0...10).map { (65 + rand(26)).chr }.join
 
-    trap(:INT) { puts; send_kill(options['id']) }
+    trap(:INT) { puts; kill(options['id']) }
     _exec(args, options)
   end
 
@@ -59,11 +58,15 @@ class Abricot::Master
     num_worker_done = 0
 
     format = '%t |%b>%i| %c/%C'
-    start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers,
-                                  :throttle_rate => 0)
+    unless options['quiet']
+      start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers,
+                                    :throttle_rate => 0)
+    end
     done_pb = nil
     status = nil
     output = nil
+
+    redis_sub = Redis.new(:url => options[:redis])
 
     redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
@@ -82,8 +85,10 @@ class Abricot::Master
           if num_worker_start == num_workers
             start_pb.finish
             start_pb = nil
-            done_pb = ProgressBar.create(:format => format, :title => 'done ', :throttle_rate => 0,
-                                         :starting_at => num_worker_done, :total => num_workers)
+            unless options['quiet']
+              done_pb = ProgressBar.create(:format => format, :title => 'done ', :throttle_rate => 0,
+                                           :starting_at => num_worker_done, :total => num_workers)
+            end
           end
         when 'done' then
           if status != :fail
@@ -107,15 +112,17 @@ class Abricot::Master
       end
     end
 
+    redis_sub.quit rescue nil
+
     raise JobFailure.new(output) if status == :fail
   end
 
-  def send_kill(id)
+  def kill(id)
     Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => id.to_s}.to_json) }.join
     exit
   end
 
-  def send_kill_all
+  def kill_all
     Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'killall'}.to_json) }.join
     exit
   end

@@ -29,6 +29,15 @@ Example:
 $ abricot listen --redis redis://redis-server:port/db
 ```
 
+### Tagging Slaves
+
+You may tag slaves with multiple tags to allow master to pick which slaves get
+to execute the job.
+
+```
+$ abricot listen --tags large,ruby
+```
+
 ### Running a job
 
 To run a job, you may pass several arguments:
@@ -37,6 +46,7 @@ To run a job, you may pass several arguments:
 * `-f FILE`: Run a script file, which will be uploaded. You may use arbitrary
   scripts with `#!...` in the header.
 * `-n NUM_WORKERS`: Run the job on exactly `NUM_WORKERS`.
+* `-t TAG`: Run the job only on slaves tagged with `TAG`.
 
 License
 --------
