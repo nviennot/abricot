@@ -90,7 +90,7 @@ class Abricot::Slave
 
     return unless status
 
-    STDERR.puts output
+    # STDERR.puts output
     STDERR.puts "exited with #{status}"
     STDERR.puts "-" * 80
     STDERR.puts ""
@@ -115,6 +115,8 @@ class Abricot::Slave
         ENV['WORKER_INDEX'] = worker_index.to_s
         ENV['NUM_WORKERS'] = num_workers.to_s
 
+        Process.setpgrp
+
         $stderr.reopen($stdout)
         begin
           exec(*args)
@@ -129,14 +131,20 @@ class Abricot::Slave
       output = []
       loop do
         unless @runner_threads[job_id]
-          STDERR.puts "WARNING: Killing Running Job!"
-          Process.kill('KILL', io.pid)
+          STDERR.puts "WARNING: Killing Running Job! (pid #{io.pid})"
+          # - means process group
+          Process.kill('-KILL', io.pid)
           break
         end
 
-        if IO.select([io], [], [], 0.1)
-          buffer = io.read
-          break if buffer.empty?
+        rs, _, _ = IO.select([io], [], [], 0.1)
+        if rs && rs.first
+          begin
+            buffer = io.readpartial(4096)
+          rescue EOFError
+            break
+          end
+          STDERR.print buffer
           output << buffer
         end
       end

@@ -11,7 +11,7 @@ class Abricot::CLI < Thor
 
   desc "exec ARGS...", "Run a command on slaves"
   option :redis,       :type => :string
-  option :cmd,         :type => :boolean, :aliases => :c
+  option :script,      :type => :boolean, :aliases => :s
   option :file,        :type => :string,  :aliases => :f
   option :num_workers, :type => :numeric, :aliases => :n
   option :id,          :type => :string

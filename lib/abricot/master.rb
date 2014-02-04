@@ -1,4 +1,5 @@
 require 'ruby-progressbar'
+require 'thor/core_ext/hash_with_indifferent_access'
 
 class Abricot::Master
   class JobFailure < RuntimeError; end
@@ -7,7 +8,7 @@ class Abricot::Master
   attr_accessor :redis
 
   def initialize(options={})
-    @redis = Redis.new(:url => options[:redis])
+    @redis = Redis.new(:url => (options[:redis] || ENV['REDIS_URL']))
   end
 
   def num_workers_available(tag)
@@ -15,19 +16,19 @@ class Abricot::Master
   end
 
   def exec(args, options={})
-    options = options.dup
-    options['id'] ||= (0...10).map { (65 + rand(26)).chr }.join
+    options =  ::Thor::CoreExt::HashWithIndifferentAccess.new(options)
+    options[:id] ||= (0...10).map { (65 + rand(26)).chr }.join
 
-    trap(:INT) { puts; kill(options['id']) }
+    trap(:INT) { puts; kill(options[:id]); exit }
     _exec(args, options)
   end
 
   def _exec(args, options={})
-    tag = options['tag'] || '_all_'
+    tag = (options[:tag] || '_all_').to_s
     raise "Cannot have multi tags" if tag.include?(',')
 
-    script = File.read(options['file']) if options['file']
-    script ||= args.join(" ") if options['cmd']
+    script = File.read(options[:file]) if options[:file]
+    script ||= args.join(" ") if options[:cmd]
 
     if script
       lines = script.lines.to_a
@@ -40,25 +41,29 @@ class Abricot::Master
       payload = {:type => 'exec', :args => args}
     end
 
-    num_workers = options['num_workers']
+    num_workers = options[:num_workers]
     available_workers = num_workers_available(tag)
     if num_workers
       if available_workers < num_workers
         raise NotEnoughSlaves.new("Requested #{num_workers} slaves but only #{available_workers} were available")
       end
     else
+      if available_workers == 0
+        raise NotEnoughSlaves.new("No workers available :(")
+      end
       num_workers = available_workers
     end
 
-    id = options['id']
+    id = options[:id]
     payload[:id] = id
     payload[:num_workers] = num_workers
 
     num_worker_start = 0
     num_worker_done = 0
 
-    format = '%t |%b>%i| %c/%C'
-    unless options['quiet']
+    format = '%t |%b>%i| %c/%C %a'
+    unless options[:quiet]
+      start_pb = nil
       start_pb = ProgressBar.create(:format => format,  :title => 'start', :total => num_workers,
                                     :throttle_rate => 0)
     end
@@ -66,7 +71,7 @@ class Abricot::Master
     status = nil
     output = nil
 
-    redis_sub = Redis.new(:url => options[:redis])
+    redis_sub = Redis.new(:url => redis.client.options[:url])
 
     redis_sub.subscribe("abricot:job:#{id}:progress") do |on|
       on.subscribe do
@@ -81,11 +86,12 @@ class Abricot::Master
         case msg['type']
         when 'start' then
           num_worker_start += 1
-          start_pb.progress = num_worker_start
+          start_pb.progress = num_worker_start if start_pb
           if num_worker_start == num_workers
-            start_pb.finish
+            start_pb.finish if start_pb
+            STDERR.puts "\033[2A"
             start_pb = nil
-            unless options['quiet']
+            unless options[:quiet]
               done_pb = ProgressBar.create(:format => format, :title => 'done ', :throttle_rate => 0,
                                            :starting_at => num_worker_done, :total => num_workers)
             end
@@ -119,11 +125,9 @@ class Abricot::Master
 
   def kill(id)
     Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => id.to_s}.to_json) }.join
-    exit
   end
 
   def kill_all
     Thread.new { redis.publish('abricot:slave_control:_all_', {'type' => 'killall'}.to_json) }.join
-    exit
   end
 end
