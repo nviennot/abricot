@@ -13,7 +13,6 @@ Gem::Specification.new do |s|
   s.license     = "LGPLv3"
 
   s.add_dependency "redis", "~> 3.0.7"
-  s.add_dependency "ruby-progressbar", "~> 1.4.1"
   s.add_dependency "thor", "~> 0.18.1"
   s.add_dependency "json", "~> 1.8.1"
 

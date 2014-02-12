@@ -1,3 +1,4 @@
+require 'abricot'
 require 'tempfile'
 
 class Abricot::Slave
