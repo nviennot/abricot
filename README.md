@@ -116,12 +116,19 @@ multi = @abricot.multi :async => true do
 end
 
 sleep 0.5
-multi.kill
-multi.wait
+multi.check_for_failures # raises if any job had a failure
+multi.kill # kill all jobs
+multi.wait # wait for all jobs
 ```
 
 Note that the whole batch will be aborded if one of the command fails, and an
 exception will be thrown in `wait()`.
+
+### Exceptions
+
+You may get the following exceptions when running jobs:
+`Abricot::Master::JobFailure`
+`Abricot::Master::NotEnoughSlaves`.
 
 License
 --------

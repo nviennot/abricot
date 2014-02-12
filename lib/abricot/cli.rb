@@ -13,8 +13,8 @@ class Abricot::CLI < Thor
   option :redis,       :type => :string
   option :file,        :type => :string,  :aliases => :f
   option :num_workers, :type => :numeric, :aliases => :n
+  option :tag,         :type => :string,  :aliases => :t
   option :id,          :type => :string
-  option :tag,         :type => :string, :aliases => :t
   def exec(*args)
     require 'abricot/master'
     Abricot::Master.new(options).exec(*args, options)

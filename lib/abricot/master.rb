@@ -171,15 +171,13 @@ class Abricot::Master
         failed_job || jobs.all? { |job| job.finished? }
       end
 
-      if failed_job
-        jobs.each { |job| job.kill unless job.finished? }
-      else
-        jobs.each(&:wait)
-      end
-
+      failed_job ? jobs.each(&:kill) : jobs.each(&:wait)
       master.redraw_progress
+      check_for_failures
+    end
 
-      failed_job.wait if failed_job # will raise exception
+    def check_for_failures
+      jobs.each(&:check_for_failures)
     end
 
     def kill
@@ -271,6 +269,7 @@ class Abricot::Master
             master.redis_wait.unsubscribe("abricot:job:#{id}:progress")
             @output = msg['output']
             @status = :failed
+            self._kill
           else
             @num_completed += 1
             if @num_completed == num_workers
@@ -288,10 +287,12 @@ class Abricot::Master
       available_workers = master.num_workers_available(tag)
       if num_workers
         if available_workers < num_workers
+          @status = :failed
           raise NotEnoughSlaves.new("Requested #{num_workers} slaves but only #{available_workers} were available")
         end
       else
         if available_workers == 0
+          @status = :failed
           raise NotEnoughSlaves.new("No workers available :(")
         end
         options[:num_workers] = available_workers
@@ -309,7 +310,7 @@ class Abricot::Master
     end
 
     def failed?
-      @status == :failed || @status == :killed
+      @status == :failed
     end
 
     def state_changed!
@@ -319,13 +320,20 @@ class Abricot::Master
     def wait
       @status_signal.wait_until { finished? }
       master.redraw_mutex.synchronize {} # Finish redrawing
-      raise JobFailure.new(@output) if failed?
+      check_for_failures
+    end
+
+    def check_for_failures
+      raise JobFailure.new(@output) if @status == :failed
+    end
+
+    def _kill
+      master.redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => self.id.to_s}.to_json)
     end
 
     def kill
       return if finished?
-
-      master.redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => self.id.to_s}.to_json)
+      _kill
       master.redraw_mutex.synchronize do
         @status = :killed
         @output = 'Job killed'
