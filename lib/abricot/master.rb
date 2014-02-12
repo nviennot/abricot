@@ -1,54 +1,81 @@
 require 'abricot'
 require 'thor/core_ext/hash_with_indifferent_access'
 
+trap(:INT) { exit }
+
 class Abricot::Master
   class JobFailure < RuntimeError; end
   class NotEnoughSlaves < RuntimeError; end
 
-  attr_accessor :redis, :redis_wait, :jobs, :thread_wait_loop, :mutex
+  class Signal
+    def initialize
+      @signal_mutex = Mutex.new
+      @signal_cvar = ConditionVariable.new
+    end
+
+    def signal!
+      @signal_mutex.synchronize { @signal_cvar.broadcast }
+    end
+
+    def wait_until(&block)
+      @signal_mutex.synchronize do
+        loop do
+          break if block.call
+          @signal_cvar.wait(@signal_mutex)
+        end
+      end
+    end
+  end
+
+  attr_accessor :redis, :redis_wait, :jobs
+  attr_accessor :wait_loop_running_signal, :wait_loop_running, :redraw_mutex
 
   def initialize(options={})
     @redis = Redis.new(:url => (options[:redis] || ENV['REDIS_URL']))
     @redis_wait = Redis.new(:url => (options[:redis] || ENV['REDIS_URL']))
     @jobs = {}
-    @thread_wait_loop = Thread.new { wait_loop }
-    @mutex = Mutex.new
-    sleep 0.01 until @wait_loop_running
-    trap(:INT) { STDERR.print "\033[3D"; Thread.new { self.kill_all_jobs }.join; exit }
+    @wait_loop_running_signal = Signal.new
+    @redraw_mutex = Mutex.new
+    Thread.new { wait_loop }
+
+    at_exit do
+      STDERR.print "\033[3D"
+      self.kill_all_jobs
+    end
   end
 
   def num_workers_available(tag)
     redis.pubsub('numsub', "abricot:slave_control:#{tag}").last.to_i
   end
 
-  def async_exec(args, options={})
+  def exec(*args)
+    @wait_loop_running_signal.wait_until  { @wait_loop_running }
+
+    options = args.last.is_a?(Hash) ? args.pop : {}
     options = options.dup
+
     options[:args] ||= args
     job = Job.new(self, options)
     @jobs[job.id] = job
     job.async_exec
     @multi.add_job(job) if @multi
+    job.wait unless @multi || options[:async]
     job
   end
 
-  def exec(args, options={})
-    job = async_exec(args, options)
-    job.wait unless @multi
-  end
-
-  def async_multi(&block)
+  def multi(options={}, &block)
     @multi = Multi.new(self)
     yield
-    @multi
+    options[:async] ?  @multi : @multi.wait
+  rescue Exception
+    begin
+      @multi.kill
+    rescue
+    end
+    raise
   ensure
+    @multi.finalize unless options[:async]
     @multi = nil
-  end
-
-  def multi(&block)
-    m = async_multi(&block)
-    m.wait
-  ensure
-    m.finalize
   end
 
   def kill_all_jobs
@@ -67,6 +94,8 @@ class Abricot::Master
     @redis_wait.subscribe("abricot:job:dummy") do |on|
       on.subscribe do |channel|
         @wait_loop_running = true
+        @wait_loop_running_signal.signal!
+
         job = get_job_from_channel(channel)
         job.on_progress_subscribe if job
         redraw_progress
@@ -74,7 +103,7 @@ class Abricot::Master
 
       on.message do |channel, message|
         job = get_job_from_channel(channel)
-        job.on_progress_message(message)
+        job.on_progress_message(message) if job
         redraw_progress
       end
     end
@@ -85,7 +114,7 @@ class Abricot::Master
   end
 
   def redraw_progress
-    @mutex.synchronize do
+    @redraw_mutex.synchronize do
       if @last_num_printed_lines.to_i > 0
         STDERR.print "\033[#{@last_num_printed_lines}A" # Move up
       end
@@ -116,26 +145,6 @@ class Abricot::Master
         @last_num_printed_lines -= 1
       else
         break
-      end
-    end
-  end
-
-  class Signal
-    def initialize
-      @signal_mutex = Mutex.new
-      @signal_cvar = ConditionVariable.new
-    end
-
-    def signal!
-      @signal_mutex.synchronize { @signal_cvar.broadcast }
-    end
-
-    def wait_until(&block)
-      @signal_mutex.synchronize do
-        loop do
-          break if block.call
-          @signal_cvar.wait(@signal_mutex)
-        end
       end
     end
   end
@@ -220,22 +229,22 @@ class Abricot::Master
 
     def job_payload
       @job_payload ||= begin
-        script = File.read(options[:file]) if options[:file]
-        script ||= options[:args].join(" ") if options[:cmd]
-
-        payload = if script
-          lines = script.lines.to_a
-          unless lines.first =~ /^#!/
-            lines = ['#!/bin/bash'] + lines
-            script = lines.join("\n")
-          end
-          {:type => 'script', :script => script}
+        script = if options[:file]
+          File.read(options[:file])
         else
-          {:type => 'exec', :args => options[:args] }
+          cmd = options[:args].first
+          cmd_args = options[:args][1..-1]
+          "#{cmd} #{cmd_args.map { |a| "\"#{a}\"" }.join(" ")}"
         end
-        payload[:id] = self.id
-        payload[:num_workers] = self.num_workers
-        payload
+
+        unless script[0] == '#' && script[1] == '!'
+          script = "#!/bin/bash\n" + script
+        end
+
+        { :type => 'script',
+          :script => script,
+          :id => self.id,
+          :num_workers => self.num_workers }
       end
     end
 
@@ -309,7 +318,7 @@ class Abricot::Master
 
     def wait
       @status_signal.wait_until { finished? }
-      master.mutex.synchronize {} # Finish redrawing
+      master.redraw_mutex.synchronize {} # Finish redrawing
       raise JobFailure.new(@output) if failed?
     end
 
@@ -317,7 +326,7 @@ class Abricot::Master
       return if finished?
 
       master.redis.publish('abricot:slave_control:_all_', {'type' => 'kill', 'id' => self.id.to_s}.to_json)
-      master.mutex.synchronize do
+      master.redraw_mutex.synchronize do
         @status = :killed
         @output = 'Job killed'
       end

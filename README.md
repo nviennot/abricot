@@ -40,11 +40,15 @@ $ abricot listen --tags large,ruby
 
 ### Running a job on the command line
 
+```
+$ abricot exec CMD [ARGS...]
+```
+
 To run a job, you may pass several arguments:
 
-* `-s CMD`: Run your command through bash
 * `-f FILE`: Run a script file, which will be uploaded. You may use arbitrary
-  scripts with `#!...` in the header.
+  scripts with `#!...` in the header. Arguments given on the command line are
+  ignored.
 * `-n NUM_WORKERS`: Run the job on exactly `NUM_WORKERS`.
 * `-t TAG`: Run the job only on slaves tagged with `TAG`.
 
@@ -53,22 +57,27 @@ To run a job, you may pass several arguments:
 ```ruby
 require 'abricot/master'
 
-@abricot = Abricot::Master.new(:redis => 'redis://master/1')
+@abricot = Abricot::Master.new(:redis => 'redis://localhost/1')
 
-@abricot.exec <<-SCRIPT, :script => true, :name => "Saying Hello"
+@abricot.exec <<-SCRIPT, :name => "Saying Hello"
   touch /tmp/hello
   sleep 1
   echo "Hello"
 SCRIPT
+
+@abricot.exec <<-SCRIPT, :name => "Saying Hello"
+#!/usr/bin/env ruby
+puts "Hello"
+SCRIPT
+
+@abricot.exec "echo", "Hello"
 ```
 
-You may pass the following options:
+You may pass the following options to `exec()`:
 
-* `:redis`: The Redis URL
-* `:script`: true/false to tell if you are running a script.
-* `:file`: A filename which file content will be uploaded and run as a script.
 * `:num_workers`: How many workers to run the command/script on.
 * `:tag`: a string to specify which tagged workers to run on.
+* `:async`: run the job asynchronously.
 
 ### Killing any jobs
 
@@ -82,8 +91,8 @@ Note that a SIGINT (ctrl+c) will trigger a `kill_all_jobs`.
 ### Running a job programmatically (async)
 
 ```ruby
-job1 = @abricot.async_exec %w(sleep 2)
-job2 = @abricot.async_exec %w(sleep 1)
+job1 = @abricot.exec "sleep 2", :async => true
+job2 = @abricot.exec "sleep 1", :async => true
 
 job1.wait
 job2.kill
@@ -93,17 +102,17 @@ job2.kill
 
 ```ruby
 @abricot.multi do
-  @abricot.exec %w(sleep 2)
-  @abricot.exec %w(sleep 1)
+  @abricot.exec "sleep 2"
+  @abricot.exec "sleep 1"
 end
 ```
 
 ### Running jobs in batches (async)
 
 ```ruby
-multi = @abricot.async_multi do
-  @abricot.exec %w(sleep 2)
-  @abricot.exec %w(sleep 1)
+multi = @abricot.multi :async => true do
+  @abricot.exec "sleep 2"
+  @abricot.exec "sleep 1"
 end
 
 sleep 0.5

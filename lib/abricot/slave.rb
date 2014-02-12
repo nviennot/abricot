@@ -75,6 +75,7 @@ class Abricot::Slave
     redis.publish("abricot:job:#{id}:progress", {'type' => 'start'}.to_json)
 
     output, status = case options['type']
+    # 'exec' is no longer used. Keeping it if we need it later
     when 'exec' then exec_and_capture(id, worker_index, num_workers, *options['args'])
     when 'script' then
       file = Tempfile.new('abricot-')
@@ -84,7 +85,7 @@ class Abricot::Slave
         file.close
         exec_and_capture(id, worker_index, num_workers, file.path)
       ensure
-        file.delete
+        file.unlink
       end
     else raise "Unknown type"
     end
@@ -104,6 +105,7 @@ class Abricot::Slave
     kill_job(id)
   rescue Exception => e
     STDERR.puts e
+    STDERR.puts e.backtrace.join("\n")
   end
 
   def exec_and_capture(job_id, worker_index, num_workers, *args)
@@ -121,8 +123,12 @@ class Abricot::Slave
         $stderr.reopen($stdout)
         begin
           exec(*args)
+        rescue Errno::ETXTBSY
+          sleep 0.1
+          retry
         rescue Exception => e
           STDERR.puts "#{e} while running #{args}"
+          STDERR.puts e.backtrace.join("\n")
         end
         exit! 1
       end

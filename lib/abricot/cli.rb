@@ -11,14 +11,13 @@ class Abricot::CLI < Thor
 
   desc "exec ARGS...", "Run a command on slaves"
   option :redis,       :type => :string
-  option :script,      :type => :boolean, :aliases => :s
   option :file,        :type => :string,  :aliases => :f
   option :num_workers, :type => :numeric, :aliases => :n
   option :id,          :type => :string
   option :tag,         :type => :string, :aliases => :t
   def exec(*args)
     require 'abricot/master'
-    Abricot::Master.new(options).exec(args, options)
+    Abricot::Master.new(options).exec(*args, options)
   rescue Abricot::Master::NotEnoughSlaves => e
     STDERR.puts e.message
   rescue Abricot::Master::JobFailure => e
