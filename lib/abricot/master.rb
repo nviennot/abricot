@@ -122,7 +122,7 @@ class Abricot::Master
       jobs.values.each do |job|
         status = case job.status
         when :idle     then "\033[1;33m---> #{job.name}..."
-        when :started  then "\033[1;33m---> #{job.name}... started (#{job.num_started}/#{job.num_workers})"
+        when :started  then "\033[1;33m---> #{job.name}... starting (#{job.num_started}/#{job.num_workers})"
         when :running  then "\033[1;33m---> #{job.name}... running (#{job.num_completed}/#{job.num_workers})"
         when :success  then "\033[1;32m---> #{job.name}... done"
         when :failed   then "\033[1;31m---> #{job.name}... FAILED"

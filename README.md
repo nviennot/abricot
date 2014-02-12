@@ -117,8 +117,7 @@ multi = @abricot.multi :async => true do
   @abricot.exec "sleep 1"
 end
 
-sleep 0.5
-multi.check_for_failures # raises if any job had a failure
+multi.check_for_failures # returns immediately, raises if any job had a failure
 multi.kill # kill all jobs
 multi.wait # wait for all jobs
 ```

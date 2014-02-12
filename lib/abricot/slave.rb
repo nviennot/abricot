@@ -136,7 +136,7 @@ class Abricot::Slave
       output = []
       loop do
         unless @runner_threads[job_id]
-          STDERR.puts "Terminating Job (pid #{io.pid})"
+          STDERR.puts "Terminating Job... (pid #{io.pid})"
           # - means process group
           Process.kill('-TERM', io.pid)
           break
@@ -164,7 +164,7 @@ class Abricot::Slave
           Process.kill('-KILL', io.pid)
           _, status = Process.waitpid2(io.pid)
         end
-          STDERR.puts "Job terminated. (pid #{io.pid})"
+        STDERR.puts "Job terminated. (pid #{io.pid})"
       else
         _, status = Process.waitpid2(io.pid)
       end
