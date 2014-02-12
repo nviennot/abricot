@@ -87,6 +87,8 @@ You may pass the following options to `exec()`:
 ```
 
 Note that a SIGINT (ctrl+c) will trigger a `kill_all_jobs`.
+Killing jobs is done by issuing a SIGTERM, and then 2 seconds later, a SIGKILL if
+the process did not respond to the SIGTERM.
 
 ### Running a job programmatically (async)
 

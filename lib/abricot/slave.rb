@@ -1,5 +1,6 @@
 require 'abricot'
 require 'tempfile'
+require 'timeout'
 
 class Abricot::Slave
   attr_accessor :redis, :redis_sub
@@ -112,9 +113,6 @@ class Abricot::Slave
     args = args.map(&:to_s)
     IO.popen('-') do |io|
       unless io
-        trap("SIGINT", "IGNORE")
-        trap("SIGTERM", "IGNORE")
-
         ENV['WORKER_INDEX'] = worker_index.to_s
         ENV['NUM_WORKERS'] = num_workers.to_s
 
@@ -138,9 +136,9 @@ class Abricot::Slave
       output = []
       loop do
         unless @runner_threads[job_id]
-          STDERR.puts "WARNING: Killing Running Job! (pid #{io.pid})"
+          STDERR.puts "Terminating Job (pid #{io.pid})"
           # - means process group
-          Process.kill('-KILL', io.pid)
+          Process.kill('-TERM', io.pid)
           break
         end
 
@@ -156,11 +154,22 @@ class Abricot::Slave
         end
       end
 
-      _, status = Process.waitpid2(io.pid)
+      unless @runner_threads[job_id]
+        begin
+          Timeout.timeout(2) do
+            _, status = Process.waitpid2(io.pid)
+          end
+        rescue Timeout::Error
+          STDERR.puts "WARNING: Killing Job (pid #{io.pid})"
+          Process.kill('-KILL', io.pid)
+          _, status = Process.waitpid2(io.pid)
+        end
+          STDERR.puts "Job terminated. (pid #{io.pid})"
+      else
+        _, status = Process.waitpid2(io.pid)
+      end
+
       [output.join, status.exitstatus]
     end
   end
 end
-
-# pubsub numsub <= num_worker
-# command en cours -> non
