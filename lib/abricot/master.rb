@@ -55,6 +55,7 @@ class Abricot::Master
     options = options.dup
 
     options[:args] ||= args
+    options[:multi] = @multi
     job = Job.new(self, options)
     @jobs[job.id] = job
     job.async_exec
@@ -124,7 +125,7 @@ class Abricot::Master
         when :idle     then "\033[1;33m---> #{job.name}..."
         when :started  then "\033[1;33m---> #{job.name}... starting (#{job.num_started}/#{job.num_workers})"
         when :running  then "\033[1;33m---> #{job.name}... running (#{job.num_completed}/#{job.num_workers})"
-        when :success  then "\033[1;32m---> #{job.name}... done"
+        when :success  then "\033[1;32m---> #{job.name}... done (#{job.num_completed}/#{job.num_workers})"
         when :failed   then "\033[1;31m---> #{job.name}... FAILED"
         when :killed   then "\033[1;33m---> #{job.name}... KILLED"
         end
@@ -211,6 +212,10 @@ class Abricot::Master
       @options[:id]
     end
 
+    def multi
+      @options[:multi]
+    end
+
     def name
       @options[:name] || "Job #{id}"
     end
@@ -270,6 +275,7 @@ class Abricot::Master
             @output = msg['output']
             @status = :failed
             self._kill
+            multi.kill if multi
           else
             @num_completed += 1
             if @num_completed == num_workers
@@ -338,9 +344,8 @@ class Abricot::Master
         @status = :killed
         @output = 'Job killed'
       end
-      state_changed!
-
       master.redraw_progress
+      state_changed!
     end
   end
 end
